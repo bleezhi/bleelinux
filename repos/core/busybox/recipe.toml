@@ -1,0 +1,31 @@
+[package]
+pkg_name = "busybox"
+version = "1.37.0"
+release = 1
+epoch = 0
+maintainer = "Bleelinux Contributors"
+
+[source]
+type = "Url"
+url = "https://busybox.net/downloads/busybox-1.37.0.tar.bz2"
+sha256 = "3d7793a89e370b8eddeadf57d1dcd18fbcbbee0ff93a6bdc61dea71e21ff5dbb"
+
+[dependencies]
+
+[build_dependencies]
+
+[configure_args]
+configure_args = []
+
+[make_args]
+make_args = ["defconfig"]
+
+[install_args]
+install_args = ["CONFIG_PREFIX=/staging"]
+
+[patches]
+
+[options]
+cross_compile = true
+
+[subpackages]

@@ -1,0 +1,142 @@
+name: packages
+on:
+  push:
+    paths:
+      - "dist/**"
+      - "repos/core/**"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release lane (e.g. core-x86_64-glibc)"
+        required: true
+        default: "core-x86_64-glibc"
+      title:
+        description: "Release title"
+        required: false
+        default: ""
+      source:
+        description: "Where .bleepkg files come from"
+        type: choice
+        default: "dist"
+        options:
+          - dist
+          - release
+          - incoming
+      dry_run:
+        description: "Build index only, do not upload"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build bleep
+        run: cargo build --release -p bleepm
+
+      - name: Collect lane dir
+        id: lane
+        run: |
+          TAG="${{ inputs.tag || 'core-x86_64-glibc' }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "dir=dist/$TAG" >> "$GITHUB_OUTPUT"
+          mkdir -p "dist/$TAG"
+          ls -la "dist/$TAG" || true
+
+      - name: Pull assets from release
+        if: ${{ inputs.source == 'release' }}
+        run: |
+          rm -f "dist/${{ steps.lane.outputs.tag }}"/*.bleepkg
+          gh release download "${{ steps.lane.outputs.tag }}" \
+            --repo bleezhi/packages \
+            --pattern '*.bleepkg' --dir "${{ steps.lane.outputs.dir }}" --clobber
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Pull staged uploads
+        if: ${{ inputs.source == 'incoming' }}
+        run: |
+          TAG="${{ steps.lane.outputs.tag }}"
+          DIR="${{ steps.lane.outputs.dir }}"
+          LIST=$(gh api "repos/bleezhi/packages/contents/incoming/$TAG" --jq '.[].name' 2>/dev/null || true)
+          if [ -z "$LIST" ]; then echo "nothing staged under incoming/$TAG"; fi
+          for f in $LIST; do
+            curl -sL "https://raw.githubusercontent.com/bleezhi/packages/main/incoming/$TAG/$f" -o "$DIR/$f"
+          done
+          ls -la "$DIR"
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Bootstrap demo package
+        run: |
+          DIR="${{ steps.lane.outputs.dir }}"
+          if ! ls "$DIR"/*.bleepkg >/dev/null 2>&1; then
+            echo "lane empty – packing demo hello package"
+            mkdir -p /tmp/demo-pkg/usr/bin
+            printf '#!/bin/sh\necho hello-bleelinux\n' > /tmp/demo-pkg/usr/bin/hello
+            chmod +x /tmp/demo-pkg/usr/bin/hello
+            ./target/release/bleep pack /tmp/demo-pkg \
+              --name hello --version 1.0.0 -o "$DIR"
+          fi
+
+      - name: Build index
+        run: ./target/release/bleep repo-index "${{ steps.lane.outputs.dir }}"
+
+      # NOTE: GITHUB_TOKEN can't write to another repo – create a classic PAT
+      # with `repo` scope and store it as the PACKAGES_TOKEN secret.
+      - name: Ensure release exists
+        if: ${{ ! inputs.dry_run }}
+        run: |
+          gh release view "${{ steps.lane.outputs.tag }}" --repo bleezhi/packages >/dev/null 2>&1 || \
+            gh release create "${{ steps.lane.outputs.tag }}" --repo bleezhi/packages \
+              --title "${{ inputs.title || steps.lane.outputs.tag }}" \
+              --notes "bleelinux package lane ${{ steps.lane.outputs.tag }}"
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Upload assets
+        if: ${{ ! inputs.dry_run }}
+        run: |
+          gh release upload "${{ steps.lane.outputs.tag }}" --repo bleezhi/packages \
+            "${{ steps.lane.outputs.dir }}"/*.bleepkg \
+            "${{ steps.lane.outputs.dir }}"/index.json.zst \
+            "${{ steps.lane.outputs.dir }}"/packages.json \
+            --clobber
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Publish lane index for the website
+        if: ${{ ! inputs.dry_run }}
+        run: |
+          TAG="${{ steps.lane.outputs.tag }}"
+          git clone "https://x-access-token:${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}@github.com/bleezhi/packages.git" /tmp/pkgs
+          mkdir -p /tmp/pkgs/lanes/$TAG
+          cp "${{ steps.lane.outputs.dir }}/packages.json" /tmp/pkgs/lanes/$TAG/
+          (cd /tmp/pkgs && git ls-files lanes --format='%(path)' | sed 's|lanes/||; s|/packages.json||' | sort -u > lanes.json || true)
+          cd /tmp/pkgs
+          git add lanes lanes.json
+          git -c user.name=bleelinux-ci -c user.email=bleelinux-ci@users.noreply.github.com \
+            commit -qm "lane $TAG index" && git push origin main || echo "nothing to push"
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Clear staged uploads
+        if: ${{ inputs.source == 'incoming' && ! inputs.dry_run }}
+        run: |
+          TAG="${{ steps.lane.outputs.tag }}"
+          gh api "repos/bleezhi/packages/contents/incoming/$TAG" \
+            --jq '.[] | "\(.name) \(.sha)"' 2>/dev/null | while read -r name sha; do
+            [ -n "$name" ] || continue
+            gh api -X DELETE "repos/bleezhi/packages/contents/incoming/$TAG/$name" \
+              -f message="consume staged $name" -f sha="$sha" --silent
+            echo "consumed $name"
+          done
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}

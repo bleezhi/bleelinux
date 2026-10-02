@@ -1,0 +1,27 @@
+[package]
+name = "bleepkg"
+description = "Package format, metadata, and binary package handling"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+thiserror = { workspace = true }
+zstd = { workspace = true }
+sha2 = { workspace = true }
+blake3 = { workspace = true }
+chrono = { workspace = true }
+semver = { workspace = true }
+uuid = { workspace = true }
+tar = { workspace = true }
+walkdir = { workspace = true }
+tempfile = { workspace = true }
+whoami = { workspace = true }
+minisign = { workspace = true }
+rusqlite = { workspace = true }

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bleelinux packages</title>
+<style>
+:root { color-scheme: dark; }
+body { font-family: system-ui, sans-serif; max-width: 860px; margin: 2em auto; padding: 0 1em; background: #111; color: #eee; }
+a { color: #7cc4ff; }
+code, pre { background: #222; padding: .15em .4em; border-radius: 4px; }
+pre { padding: .8em; overflow-x: auto; }
+button { background: #2a2a2a; color: #eee; border: 1px solid #555; border-radius: 4px; padding: .2em .6em; cursor: pointer; }
+button:hover { background: #3a3a3a; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: .4em .6em; border-bottom: 1px solid #333; }
+.muted { color: #999; }
+.lanes button { margin: 0 .3em .3em 0; }
+.lanes button.active { border-color: #7cc4ff; }
+header { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<header>
+  <h1>bleelinux packages</h1>
+  <nav><a href="upload.html">upload</a> · <a id="actions" href="#">actions</a></nav>
+</header>
+<p class="muted">Static repo lanes on GitHub Releases. No server. Add a lane, refresh, install.</p>
+
+<div class="lanes" id="lanes"></div>
+
+<h2 id="lane-name"></h2>
+<pre id="add-cmd"></pre>
+
+<table>
+  <thead><tr><th>package</th><th>version</th><th>size</th><th>install</th></tr></thead>
+  <tbody id="pkgs"><tr><td colspan="4" class="muted">loading…</td></tr></tbody>
+</table>
+
+<script>
+// ---- config: point at your packages repo ----
+const ORG = "bleezhi";
+const REPO = "packages";
+const LANES = ["core-x86_64-glibc", "core-aarch64-glibc"];
+// --------------------------------------------
+const base = `https://github.com/${ORG}/${REPO}/releases/download`;
+// raw.githubusercontent.com sends CORS headers; release CDNs do not,
+// so the browser reads lane indexes from git, not from release assets.
+const rawBase = `https://raw.githubusercontent.com/${ORG}/${REPO}/main`;
+document.getElementById("actions").href =
+  `https://github.com/${ORG}/bleelinux/actions/workflows/packages.yml`;
+
+const lanesEl = document.getElementById("lanes");
+const params = new URLSearchParams(location.search);
+let lane = params.get("lane") || null;
+
+async function loadLanes() {
+  try {
+    const r = await fetch(`${rawBase}/lanes.json`);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const lanes = await r.json();
+    if (Array.isArray(lanes) && lanes.length) return lanes;
+  } catch (e) { /* fall through to built-ins */ }
+  return LANES;
+}
+
+function renderLanes(lanes) {
+  if (!lane || !lanes.includes(lane)) lane = lanes[0];
+  lanes.forEach(l => {
+    const b = document.createElement("button");
+    b.textContent = l;
+    if (l === lane) b.classList.add("active");
+    b.onclick = () => { location.search = "?lane=" + encodeURIComponent(l); };
+    lanesEl.appendChild(b);
+  });
+  document.getElementById("lane-name").textContent = lane;
+  const addCmd = `bleep repo add ${lane.split("-")[0]} ${base}/${lane}\nbleep repo refresh`;
+  const addPre = document.getElementById("add-cmd");
+  addPre.innerHTML = "";
+  addPre.appendChild(document.createTextNode(addCmd + "\n"));
+  const copy = document.createElement("button");
+  copy.textContent = "copy";
+  copy.onclick = () => navigator.clipboard.writeText(addCmd);
+  addPre.appendChild(copy);
+  loadPackages();
+}
+
+function fmtSize(n) {
+  if (n < 1024) return n + " B";
+  const u = ["KB", "MB", "GB"];
+  let i = -1, s = n;
+  do { s /= 1024; i++; } while (s >= 1024 && i < u.length - 1);
+  return s.toFixed(1) + " " + u[i];
+}
+
+function loadPackages() {
+fetch(`${rawBase}/lanes/${lane}/packages.json`)
+  .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+  .then(idx => {
+    const tb = document.getElementById("pkgs");
+    tb.innerHTML = "";
+    const names = Object.keys(idx.packages || {}).sort();
+    if (!names.length) {
+      tb.innerHTML = '<tr><td colspan="4" class="muted">empty lane</td></tr>';
+      return;
+    }
+    for (const name of names) {
+      const vers = idx.packages[name].slice().sort((a, b) =>
+        a.version.localeCompare(b.version, undefined, { numeric: true }));
+      const latest = vers[vers.length - 1];
+      const tr = document.createElement("tr");
+      const cmd = `bleep install ${name}`;
+      tr.innerHTML =
+        `<td><code>${name}</code><br><span class="muted">${latest.summary || ""}</span></td>` +
+        `<td>${latest.version}-${latest.release}</td>` +
+        `<td>${fmtSize(latest.download_size || 0)}</td>`;
+      const td = document.createElement("td");
+      const b = document.createElement("button");
+      b.textContent = "copy";
+      b.onclick = () => navigator.clipboard.writeText(cmd);
+      td.appendChild(b);
+      tr.appendChild(td);
+      tb.appendChild(tr);
+    }
+  })
+  .catch(e => {
+    document.getElementById("pkgs").innerHTML =
+      `<tr><td colspan="4" class="muted">no index yet (${e.message}) – publish the lane first</td></tr>`;
+  });
+}
+
+loadLanes().then(renderLanes);
+</script>
+</body>
+</html>

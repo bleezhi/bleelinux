@@ -1,0 +1,7 @@
+x86_64-unknown-linux-gnu
+x86_64-unknown-linux-musl
+aarch64-unknown-linux-gnu
+aarch64-unknown-linux-musl
+riscv64-unknown-linux-gnu
+riscv64-unknown-linux-musl
+powerpc64le-unknown-linux-gnu

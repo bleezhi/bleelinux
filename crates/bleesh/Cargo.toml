@@ -1,0 +1,16 @@
+[package]
+name = "bleesh"
+description = "Bleelinux shell – minimal POSIX-ish interactive shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+rustyline.workspace = true
+
+[[bin]]
+name = "bleesh"
+path = "src/main.rs"

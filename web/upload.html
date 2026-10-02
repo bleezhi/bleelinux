@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>upload – bleelinux packages</title>
+<style>
+:root { color-scheme: dark; }
+body { font-family: system-ui, sans-serif; max-width: 700px; margin: 2em auto; padding: 0 1em; background: #111; color: #eee; }
+a { color: #7cc4ff; }
+label { display: block; margin: .8em 0 .2em; }
+input { width: 100%; box-sizing: border-box; background: #222; color: #eee; border: 1px solid #555; border-radius: 4px; padding: .4em; }
+button { background: #2a2a2a; color: #eee; border: 1px solid #555; border-radius: 4px; padding: .5em 1em; cursor: pointer; margin-top: 1em; }
+button:hover { background: #3a3a3a; }
+button:disabled { opacity: .5; cursor: default; }
+pre { background: #222; padding: .8em; border-radius: 4px; overflow-x: auto; white-space: pre-wrap; }
+.muted { color: #999; }
+.warn { color: #ffb86b; }
+</style>
+</head>
+<body>
+<h1>upload packages</h1>
+<p><a href="index.html">← browse</a></p>
+<p class="muted">Stages <code>.bleepkg</code> files into the packages repo, then triggers
+the <code>packages</code> workflow to index and publish them — no CLI needed.
+Token stays in this page's memory only, never stored.</p>
+<p class="muted">Why staging? <code>uploads.github.com</code> sends no CORS headers,
+so browsers can't POST release assets directly. Staging goes through
+<code>api.github.com</code> (CORS-enabled); CI does the release upload.</p>
+<p class="warn">Token needs <code>contents:write</code> + <code>actions:write</code>
+(classic PAT: <code>repo</code> + <code>workflow</code>).</p>
+
+<label>GitHub org/user <input id="org" value="bleezhi"></label>
+<label>Packages repo <input id="repo" value="packages"></label>
+<label>Distro repo (owns the packages workflow) <input id="distro" value="bleelinux"></label>
+<label>Lane / release tag <input id="tag" value="core-x86_64-glibc"></label>
+<label>Token <input id="token" type="password" placeholder="ghp_…"></label>
+<label>Files <input id="files" type="file" multiple accept=".bleepkg"></label>
+
+<button id="go">stage + rebuild index</button>
+<pre id="log">idle</pre>
+
+<script>
+const log = (m) => {
+  const el = document.getElementById("log");
+  if (el.textContent === "idle") el.textContent = "";
+  el.textContent += m + "\n";
+};
+const api = async (method, url, token, body) => {
+  const r = await fetch(url, {
+    method,
+    headers: {
+      "Accept": "application/vnd.github+json",
+      "Authorization": "Bearer " + token,
+      "X-GitHub-Api-Version": "2022-11-28",
+      "Content-Type": "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    const err = new Error(method + " " + url + " → HTTP " + r.status + ": " + t.slice(0, 200));
+    err.status = r.status;
+    throw err;
+  }
+  return r.status === 204 ? null : r.json();
+};
+const readB64 = (file) => new Promise((resolve, reject) => {
+  const fr = new FileReader();
+  fr.onload = () => resolve(fr.result.split(",", 2)[1]);
+  fr.onerror = () => reject(fr.error);
+  fr.readAsDataURL(file);
+});
+
+document.getElementById("go").onclick = async (ev) => {
+  const btn = ev.target;
+  btn.disabled = true;
+  try {
+    const org = document.getElementById("org").value.trim();
+    const repo = document.getElementById("repo").value.trim();
+    const distro = document.getElementById("distro").value.trim();
+    const tag = document.getElementById("tag").value.trim();
+    const token = document.getElementById("token").value.trim();
+    const files = document.getElementById("files").files;
+    if (!org || !repo || !distro || !tag || !token) throw new Error("org, repo, distro, tag, token required");
+    if (!files.length) throw new Error("pick at least one .bleepkg");
+
+    // 1. stage files via Contents API (CORS-safe, unlike uploads.github.com)
+    for (const f of files) {
+      const path = `incoming/${tag}/${f.name}`;
+      log("stage " + path + " (" + f.size + " B) …");
+      const content = await readB64(f);
+      const body = { message: `stage ${f.name} for ${tag}`, content };
+      try {
+        const existing = await api("GET",
+          `https://api.github.com/repos/${org}/${repo}/contents/${path}?ref=main`, token);
+        body.sha = existing.sha;
+        log("exists – overwriting");
+      } catch (e) {
+        if (e.status !== 404) throw e;
+      }
+      await api("PUT", `https://api.github.com/repos/${org}/${repo}/contents/${path}`, token, body);
+      log("staged");
+    }
+
+    // 2. dispatch index rebuild (CI consumes incoming/, publishes release)
+    log("dispatch packages workflow …");
+    await api("POST", `https://api.github.com/repos/${org}/${distro}/actions/workflows/packages.yml/dispatches`, token,
+      { ref: "main", inputs: { tag, source: "incoming" } });
+    log("dispatched – watch Actions, then refresh the browse page.");
+  } catch (e) {
+    log("ERROR: " + e.message);
+    if (e.status === 403 && /contents\/incoming/.test(e.message)) {
+      log("hint: this PAT can't write to the packages repo.");
+      log("  fine-grained: give it Contents read+write on bleezhi/packages");
+      log("  (plus Actions read+write on the distro repo for the dispatch step),");
+      log("  or use a classic PAT with repo + workflow scopes.");
+    } else if (e.status === 404 && /dispatches/.test(e.message)) {
+      log("hint: distro repo or workflow not found – push bleelinux (with");
+      log("  .github/workflows/packages.yml on main) first.");
+    }
+  } finally {
+    btn.disabled = false;
+  }
+};
+</script>
+</body>
+</html>

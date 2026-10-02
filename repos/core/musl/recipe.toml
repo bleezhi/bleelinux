@@ -1,0 +1,25 @@
+[package]
+pkg_name = "musl"
+version = "1.2.5"
+release = 1
+epoch = 0
+maintainer = "Bleelinux Contributors"
+
+[source]
+type = "Url"
+url = "https://musl.libc.org/releases/musl-1.2.5.tar.gz"
+sha256 = "a9a118bbe9824939df043f8007d6062a32a6643f994ea65913a2a33c4015c370"
+
+[dependencies]
+[build_dependencies]
+[configure_args]
+configure_args = ["--prefix=/usr", "--sysconfdir=/etc"]
+[make_args]
+make_args = []
+[install_args]
+install_args = []
+[patches]
+[options]
+cross_compile = true
+
+[subpackages]

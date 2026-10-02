@@ -1,0 +1,23 @@
+[package]
+pkg_name = "bleepinit"
+version = "0.1.0"
+release = 1
+epoch = 0
+maintainer = "Bleelinux Contributors"
+
+[source]
+type = "Local"
+path = "../../crates/bleepinit"
+
+[dependencies]
+[build_dependencies]
+[configure_args]
+configure_args = []
+[make_args]
+make_args = []
+[install_args]
+install_args = []
+[patches]
+[options]
+
+[subpackages]
